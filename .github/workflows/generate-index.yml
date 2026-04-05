@@ -141,7 +141,7 @@ jobs:
 
                 rootIndex.months.push({
                   ym: ymKey, count: allImages.length,
-                  index: `images/${year}/${month}/index.json`,
+                  index: `${PROXY_BASE}/${year}/${month}/index.json`,
                   preview: allImages[0]?.url || null
                 });
               }
