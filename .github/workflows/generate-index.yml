@@ -7,6 +7,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: image-index
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -15,21 +19,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Generate Index Files
+      - name: Wait for stability
+        run: sleep 10
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate & Push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node << 'SCRIPT'
+          const { execSync } = require('child_process');
           const fs = require('fs');
           const path = require('path');
 
+          const OWNER = 'ImUpXuu';
+          const REPO = 'photo';
+          const BRANCH = 'main';
           const PROXY_BASE = 'https://edit.upxuu.com/img';
           const IMAGES_DIR = 'images';
           const VALID_MONTHS = ['1','2','3','4','5','6','7','8','9','10','11','12'];
 
+          function sh(cmd) {
+            try { return execSync(cmd, { encoding: 'utf-8', stdio: 'pipe' }).trim(); }
+            catch(e) { return ''; }
+          }
+
           async function fetchAPI(url) {
             const res = await fetch(url, {
               headers: {
-                'Authorization': `token ${process.env.GITHUB_TOKEN}`,
+                'Authorization': `token ${process.env.GH_TOKEN}`,
                 'Accept': 'application/vnd.github.v3+json',
                 'User-Agent': 'github-action'
               }
@@ -37,10 +62,36 @@ jobs:
             return res.json();
           }
 
-          async function getDirContents(dirPath, ref = 'main') {
+          async function getDirContents(dirPath) {
             const encoded = dirPath.split('/').map(encodeURIComponent).join('/');
-            const data = await fetchAPI(`https://api.github.com/repos/ImUpXuu/photo/contents/${encoded}?ref=${ref}`);
+            const data = await fetchAPI(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${encoded}?ref=${BRANCH}`);
             return Array.isArray(data) ? data : [];
+          }
+
+          // Write file via GitHub API (no git conflicts)
+          async function ghWrite(filePath, contentStr) {
+            let sha = null;
+            try {
+              const data = await fetchAPI(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}?ref=${BRANCH}`);
+              sha = data.sha;
+            } catch(e) {}
+            
+            const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}`, {
+              method: 'PUT',
+              headers: {
+                'Authorization': `token ${process.env.GH_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'github-action'
+              },
+              body: JSON.stringify({
+                message: `auto: update index [skip ci]`,
+                content: Buffer.from(contentStr).toString('base64'),
+                branch: BRANCH,
+                ...(sha ? { sha } : {})
+              })
+            });
+            if (res.ok) console.log(`OK: ${filePath}`);
+            else console.error(`FAIL: ${filePath} -> ${await res.text()}`);
           }
 
           async function main() {
@@ -51,15 +102,9 @@ jobs:
               .sort()
               .reverse();
 
-            if (years.length === 0) {
-              console.log('No year directories found');
-              return;
-            }
+            if (years.length === 0) { console.log('No images found'); return; }
 
-            const rootIndex = {
-              updated: new Date().toISOString(),
-              months: []
-            };
+            const rootIndex = { updated: new Date().toISOString(), months: [] };
 
             for (const year of years) {
               const monthDirs = await getDirContents(`${IMAGES_DIR}/${year}`);
@@ -71,65 +116,40 @@ jobs:
               for (const month of monthsInYear) {
                 const ymKey = `${year}-${month.padStart(2,'0')}`;
                 const monthDirPath = `${IMAGES_DIR}/${year}/${month}`;
-                const indexPath = `${monthDirPath}/index.json`;
-
+                
                 const dayDirs = await getDirContents(monthDirPath);
                 const allImages = [];
 
                 for (const dayDir of dayDirs.filter(d => d.type === 'dir')) {
                   let files;
-                  try {
-                    files = await getDirContents(`${monthDirPath}/${dayDir.name}`);
-                  } catch(e) { continue; }
-
+                  try { files = await getDirContents(`${monthDirPath}/${dayDir.name}`); }
+                  catch(e) { continue; }
                   files
                     .filter(f => f.type === 'file' && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(f.name))
-                    .forEach(f => {
-                      allImages.push({
-                        name: f.name,
-                        url: `${PROXY_BASE}/${year}/${month}/${dayDir.name}/${f.name}`,
-                        size: f.size,
-                        date: `${year}-${month.padStart(2,'0')}-${dayDir.name.padStart(2,'0')}`
-                      });
-                    });
+                    .forEach(f => allImages.push({
+                      name: f.name,
+                      url: `${PROXY_BASE}/${year}/${month}/${dayDir.name}/${f.name}`,
+                      size: f.size,
+                      date: `${year}-${month.padStart(2,'0')}-${dayDir.name.padStart(2,'0')}`
+                    }));
                 }
 
                 allImages.sort((a, b) => b.name.localeCompare(a.name));
-
-                const monthIndex = {
-                  ym: ymKey,
-                  count: allImages.length,
-                  images: allImages
-                };
-
-                fs.mkdirSync(path.dirname(indexPath), { recursive: true });
-                fs.writeFileSync(indexPath, JSON.stringify(monthIndex, null, 2));
-                console.log(`${indexPath}: ${allImages.length} images`);
+                
+                const monthIndex = { ym: ymKey, count: allImages.length, images: allImages };
+                await ghWrite(`${IMAGES_DIR}/${year}/${month}/index.json`, JSON.stringify(monthIndex));
 
                 rootIndex.months.push({
-                  ym: ymKey,
-                  count: allImages.length,
+                  ym: ymKey, count: allImages.length,
                   index: `images/${year}/${month}/index.json`,
-                  preview: allImages.length > 0 ? allImages[0].url : null
+                  preview: allImages[0]?.url || null
                 });
               }
             }
 
-            const rootIndexPath = `${IMAGES_DIR}/index.json`;
-            fs.writeFileSync(rootIndexPath, JSON.stringify(rootIndex, null, 2));
-            console.log(`${rootIndexPath}: ${rootIndex.months.length} months total`);
+            await ghWrite(`${IMAGES_DIR}/index.json`, JSON.stringify(rootIndex));
+            console.log('All done!');
           }
 
           main().catch(e => { console.error(e); process.exit(1); });
           SCRIPT
-
-      - name: Commit & Push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add images/**/index.json
-          if ! git diff --cached --quiet; then
-            git commit -m "auto: update image index [skip ci]"
-            git pull --rebase origin main
-            git push
-          fi
