@@ -1,0 +1,177 @@
+name: Generate Image Index
+
+on:
+  push:
+    paths:
+      - 'images/**'
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate Index Files
+        run: |
+          node << 'EOF'
+          const { execSync } = require('child_process');
+          const fs = require('fs');
+          const path = require('path');
+
+          const PROXY_BASE = 'https://edit.upxuu.com/img';
+          const IMAGES_DIR = 'images';
+          const MONTHS = ['1','2','3','4','5','6','7','8','9','10','11','12'];
+
+          function getRepoInfo() {
+            const url = execSync('git remote get-url origin').toString().trim();
+            const match = url.match(/github\.com[/:](.+?)(?:\.git)?$/);
+            if (!match) throw new Error('Cannot parse repo URL');
+            const [owner, repo] = match[1].split('/');
+            return { owner, repo };
+          }
+
+          async function fetchAPI(url) {
+            const res = await fetch(url, {
+              headers: {
+                'Authorization': `token ${process.env.GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'github-action'
+              }
+            });
+            return res.json();
+          }
+
+          async function getTree(sha) {
+            const data = await fetchAPI(`https://api.github.com/git/trees/${sha}?recursive=1`);
+            return data.tree || [];
+          }
+
+          async function getDirContents(owner, repo, dirPath, ref = 'main') {
+            const encoded = dirPath.split('/').map(encodeURIComponent).join('/');
+            const data = await fetchAPI(`https://api.github.com/repos/${owner}/${repo}/contents/${encoded}?ref=${ref}`);
+            return Array.isArray(data) ? data : [];
+          }
+
+          async function main() {
+            const { owner, repo } = getRepoInfo();
+            
+            // Get root images directory contents (year folders)
+            let yearDirs;
+            try {
+              yearDirs = await getDirContents(owner, repo, IMAGES_DIR);
+            } catch(e) {
+              console.log('No images directory found');
+              return;
+            }
+
+            // Filter only year directories (numeric)
+            const years = yearDirs
+              .filter(d => d.type === 'dir' && /^\d{4}$/.test(d.name))
+              .map(d => d.name)
+              .sort()
+              .reverse();
+
+            const indexData = {
+              updated: new Date().toISOString(),
+              months: []
+            };
+
+            for (const year of years) {
+              // Get months in this year
+              let monthDirs;
+              try {
+                monthDirs = await getDirContents(owner, repo, `${IMAGES_DIR}/${year}`);
+              } catch(e) {
+                continue;
+              }
+
+              const monthsInYear = monthDirs
+                .filter(d => d.type === 'dir' && MONTHS.includes(d.name))
+                .map(d => d.name)
+                .sort((a,b) => parseInt(a) - parseInt(b));
+
+              for (const month of monthsInYear) {
+                const ymKey = `${year}-${month.padStart(2,'0')}`;
+                const indexPath = `${IMAGES_DIR}/${year}/${month}/index.json`;
+                
+                // Collect all images in this month (recursively through day dirs)
+                let dayDirs;
+                try {
+                  dayDirs = await getDirContents(owner, repo, `${IMAGES_DIR}/${year}/${month}`);
+                } catch(e) {
+                  continue;
+                }
+
+                const imageList = [];
+                
+                for (const dayDir of dayDirs.filter(d => d.type === 'dir')) {
+                  let files;
+                  try {
+                    files = await getDirContents(owner, repo, `${IMAGES_DIR}/${year}/${month}/${dayDir.name}`);
+                  } catch(e) {
+                    continue;
+                  }
+                  
+                  const images = files
+                    .filter(f => f.type === 'file' && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(f.name))
+                    .map(f => ({
+                      name: f.name,
+                      url: `${PROXY_BASE}/${year}/${month}/${dayDir.name}/${f.name}`,
+                      size: f.size,
+                      date: `${year}-${month.padStart(2,'0')}-${dayDir.name.padStart(2,'0')}`
+                    }));
+                  
+                  imageList.push(...images);
+                }
+
+                imageList.sort((a, b) => b.name.localeCompare(a.name));
+
+                // Write month index JSON
+                const monthIndex = {
+                  ym: ymKey,
+                  count: imageList.length,
+                  images: imageList
+                };
+
+                fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+                fs.writeFileSync(indexPath, JSON.stringify(monthIndex, null, 2));
+                console.log(`Generated: ${indexPath} (${imageList.length} images)`);
+
+                // Add to root index
+                indexData.months.push({
+                  ym: ymKey,
+                  count: imageList.length,
+                  index: indexPath,
+                  preview: imageList[0]?.url || null
+                });
+              }
+            }
+
+            // Write root index.json
+            const rootIndexPath = `${IMAGES_DIR}/index.json`;
+            fs.writeFileSync(rootIndexPath, JSON.stringify(indexData, null, 2));
+            console.log(`Generated: ${rootIndexPath} (${indexData.months.length} months)`);
+          }
+
+          main().catch(e => { console.error(e); process.exit(1); });
+          EOF
+
+      - name: Commit Index Files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "auto: update image index [skip ci]"
+          git push
