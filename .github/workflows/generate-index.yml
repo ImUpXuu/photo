@@ -6,15 +6,6 @@ on:
       - 'images/**'
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      proxy_base:
-        description: 'Proxy base URL (e.g., https://edit.upxuu.com/img)'
-        required: true
-        default: 'https://edit.upxuu.com/img'
-      branch:
-        description: 'Branch to scan (default: main)'
-        required: false
-        default: 'main'
 
 concurrency:
   group: image-index
@@ -37,24 +28,17 @@ jobs:
       - name: Generate & Push
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PROXY_BASE: ${{ inputs.proxy_base }}
-          BRANCH: ${{ inputs.branch || 'main' }}
         run: |
           node << 'SCRIPT'
           const REPO = process.env.GITHUB_REPOSITORY || '';
           const [OWNER, REPO_NAME] = REPO.split('/');
-          const BRANCH = process.env.BRANCH || 'main';
-          const PROXY_BASE = process.env.PROXY_BASE;
+          const BRANCH = 'main';
+          const PROXY_BASE = 'https://edit.upxuu.com/img';
           const IMAGES_DIR = 'images';
           const VALID_MONTHS = ['1','2','3','4','5','6','7','8','9','10','11','12'];
 
           if (!OWNER || !REPO_NAME) {
-            console.error('Cannot determine repo. Set GITHUB_REPOSITORY env.');
-            process.exit(1);
-          }
-
-          if (!PROXY_BASE) {
-            console.error('PROXY_BASE is required. Please provide it via workflow_dispatch input.');
+            console.error('Cannot determine repo.');
             process.exit(1);
           }
 
