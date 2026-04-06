@@ -33,7 +33,6 @@ jobs:
           const REPO = process.env.GITHUB_REPOSITORY || '';
           const [OWNER, REPO_NAME] = REPO.split('/');
           const BRANCH = 'main';
-          const RAW_PROXY = 'https://raw-githubusercontent-com-gh.2x.nz';
           const PROXY_BASE = 'https://edit.upxuu.com/img';
           const IMAGES_DIR = 'images';
           const VALID_MONTHS = ['1','2','3','4','5','6','7','8','9','10','11','12'];
@@ -139,7 +138,7 @@ jobs:
 
                 rootIndex.months.push({
                   ym: ymKey, count: allImages.length,
-                  index: `${RAW_PROXY}/${OWNER}/${REPO_NAME}/${BRANCH}/${IMAGES_DIR}/${year}/${month}/index.json`,
+                  index: `${PROXY_BASE}/${year}/${month}/index.json`,
                   preview: allImages[0]?.url || null
                 });
               }
