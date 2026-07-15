@@ -1,9 +1,9 @@
-name: Deploy to Server via SSH
+name: Deploy to Caddy Server
 
 on:
   push:
-    branches: [ main, master ]  # 监听主分支推送
-  workflow_dispatch:           # 允许手动触发
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -15,19 +15,22 @@ jobs:
       with:
         fetch-depth: 0  # 获取完整历史，用于检测变更
     
-    - name: Install SSH client and rsync
+    - name: Install rsync and sshpass
       run: |
         sudo apt-get update
         sudo apt-get install -y sshpass rsync
     
-    - name: Prepare deployment directory
-      run: |
-        # 创建部署目录 /var/www/img（如果不存在）
-        sshpass -p "${{ secrets.SERVER_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "sudo mkdir -p /var/www/img && sudo chown ${{ secrets.SERVER_USER }}:${{ secrets.SERVER_USER }} /var/www/img"
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v35
+      with:
+        files: |
+          **
     
-    - name: Deploy changed files via rsync
+    - name: Sync changed files to server
+      if: steps.changed-files.outputs.any_changed == 'true'
       run: |
-        # 使用rsync仅同步变更的文件到 /var/www/img
+        # 只同步变更的文件到 /var/www/img
         sshpass -p "${{ secrets.SERVER_PASSWORD }}" rsync -avz \
           --exclude='.git' \
           --exclude='.github' \
@@ -36,17 +39,39 @@ jobs:
           --exclude='*.log' \
           --exclude='.DS_Store' \
           --exclude='*.tmp' \
-          --delete \
           -e "ssh -o StrictHostKeyChecking=no" \
           ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/img/
+        
+        echo "✅ 文件同步完成"
     
-    - name: Set permissions (optional)
+    - name: Set permissions for Caddy
       run: |
-        # 设置目录权限（根据您的需求调整）
         sshpass -p "${{ secrets.SERVER_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-          sudo chown -R www-data:www-data /var/www/img
-          sudo chmod -R 755 /var/www/img
-          echo "✅ Deployment to /var/www/img completed successfully!"
-          echo "📁 部署路径: /var/www/img"
-          echo "📊 文件总数: $(find /var/www/img -type f | wc -l)"
+          cd /var/www/img
+          
+          # 确定Caddy用户
+          if id "caddy" &>/dev/null; then
+            CADDY_USER="caddy"
+          elif id "www-data" &>/dev/null; then
+            CADDY_USER="www-data"
+          else
+            CADDY_USER="${{ secrets.SERVER_USER }}"
+          fi
+          
+          # 设置权限
+          sudo chown -R $CADDY_USER:$CADDY_USER .
+          sudo find . -type d -exec chmod 755 {} \;
+          sudo find . -type f -exec chmod 644 {} \;
+          
+          echo "✅ 部署完成"
+          echo "📁 路径: /var/www/img"
+          echo "👤 Caddy用户: $CADDY_USER"
+          echo "📅 时间: $(date '+%Y-%m-%d %H:%M:%S')"
         EOF
+    
+    - name: Deployment summary
+      run: |
+        echo "## 部署摘要" >> $GITHUB_STEP_SUMMARY
+        echo "✅ 部署成功" >> $GITHUB_STEP_SUMMARY
+        echo "📁 路径: /var/www/img" >> $GITHUB_STEP_SUMMARY
+        echo "🔄 变更文件数: ${{ steps.changed-files.outputs.all_changed_files_count }}" >> $GITHUB_STEP_SUMMARY
