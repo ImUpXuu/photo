@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="UPXUU 图床镜像 —— 面向公开分发的图片托管镜像站，永久链接，稳定分发，提供可编程 JSON 索引。">
+<title>UPXUU 图床镜像</title>
+<style>
+  /* ============================================================
+   * 设计系统
+   * 风格：极简 / 直角（全站 border-radius: 0）/ 单一蓝色 accent
+   * 色板：主蓝 #0b4bff，深蓝 #0733c4，浅蓝底 #eef2ff
+   *      正文 #13161b，次要 #5b6470，发丝线 #dde1e7，页面底 #f6f7f9
+   * ============================================================ */
+  :root {
+    --blue:        #0b4bff;
+    --blue-dark:   #0733c4;
+    --blue-tint:   #eef2ff;
+    --ink:         #13161b;
+    --gray:        #5b6470;
+    --line:        #dde1e7;
+    --bg:          #f6f7f9;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+            "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    text-wrap: pretty;
+  }
+
+  a { color: inherit; text-decoration: none; }
+
+  .wrap { width: min(1080px, calc(100% - 48px)); margin: 0 auto; }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar-inner {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .mark {
+    width: 16px; height: 16px; background: var(--blue);
+    flex: none;
+  }
+  .brand-name { font-weight: 700; letter-spacing: 0.02em; }
+  nav { display: flex; align-items: center; gap: 4px; }
+  nav a {
+    padding: 6px 12px; font-size: 14px; color: var(--gray);
+    transition: color .15s, background .15s;
+  }
+  nav a:hover { color: var(--blue); background: var(--blue-tint); }
+
+  /* ---------- 按钮（直角） ---------- */
+  .btn {
+    display: inline-block; padding: 9px 18px;
+    border: 1px solid var(--line); background: #fff;
+    font-size: 14px; font-weight: 600;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .btn:hover { border-color: var(--blue); color: var(--blue); }
+  .btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn-primary:hover { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 96px 0 72px; }
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .28em;
+    color: var(--gray); margin-bottom: 24px;
+  }
+  .eyebrow .mark { width: 8px; height: 8px; background: var(--blue); }
+  h1 {
+    font-size: clamp(40px, 7vw, 64px);
+    font-weight: 800; line-height: 1.15; letter-spacing: 0.01em;
+  }
+  h1 .hl { color: var(--blue); }
+  .lead {
+    margin-top: 24px; font-size: 17px; color: var(--gray);
+    max-width: 560px;
+  }
+  .hero-actions { margin-top: 40px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* ---------- 数据概览 ---------- */
+  section.block { padding: 64px 0; }
+  .section-head {
+    display: flex; align-items: baseline; gap: 12px;
+    margin-bottom: 28px;
+  }
+  .section-head .mark { width: 10px; height: 10px; background: var(--blue); align-self: center; }
+  .section-head h2 { font-size: 22px; font-weight: 700; }
+  .section-head .sub { font-size: 13px; color: var(--gray); }
+  .stats {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border: 1px solid var(--line); background: #fff;
+  }
+  .stat { padding: 28px 32px; }
+  .stat + .stat { border-left: 1px solid var(--line); }
+  .stat .num {
+    font-family: var(--mono); font-size: 40px; font-weight: 700;
+    color: var(--blue); line-height: 1.2;
+  }
+  .stat .label { margin-top: 6px; font-size: 13px; color: var(--gray); }
+
+  /* ---------- 近期图片 ---------- */
+  .gallery-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  .thumb {
+    display: block; border: 1px solid var(--line); background: #fff;
+    aspect-ratio: 4 / 3; overflow: hidden;
+    transition: border-color .15s, transform .15s;
+  }
+  .thumb:hover { border-color: var(--blue); transform: translateY(-2px); }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gallery-foot {
+    margin-top: 20px; display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; color: var(--gray);
+  }
+  .gallery-foot a { color: var(--blue); }
+  .gallery-foot a:hover { text-decoration: underline; }
+
+  /* ---------- 接入方式 ---------- */
+  .usage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .usage-card { border: 1px solid var(--line); background: #fff; }
+  .usage-card .head {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    font-size: 14px; font-weight: 700; display: flex; gap: 10px; align-items: center;
+  }
+  .usage-card .head .tag {
+    font-family: var(--mono); font-size: 11px; color: var(--blue);
+    background: var(--blue-tint); padding: 1px 8px; font-weight: 600;
+  }
+  .usage-card pre {
+    margin: 0; padding: 20px; overflow-x: auto;
+    font-family: var(--mono); font-size: 13px; line-height: 1.8;
+    color: var(--ink);
+  }
+  .usage-card pre .dim { color: var(--gray); }
+  .usage-card pre .hl { color: var(--blue); font-weight: 600; }
+  .usage-note {
+    margin-top: 20px; padding: 16px 20px;
+    border: 1px solid var(--line); background: var(--blue-tint);
+    font-size: 14px; color: var(--ink);
+  }
+  .usage-note code {
+    font-family: var(--mono); font-size: 13px;
+    background: #fff; border: 1px solid var(--line); padding: 1px 6px;
+  }
+
+  /* ---------- 页脚 ---------- */
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 32px 0 48px; margin-top: 32px;
+    font-size: 13px; color: var(--gray);
+  }
+  .footer-inner { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .footer-inner a:hover { color: var(--blue); }
+
+  /* ---------- 降级（索引不可用时的提示） ---------- */
+  .fail-msg { display: none; }
+  #dynamic.fail .fail-msg { display: block; color: var(--gray); font-size: 14px; padding: 20px 0; }
+  #dynamic.fail .gallery-grid { display: none; }
+  #dynamic.fail .stats .num { color: var(--gray); }
+
+  @media (max-width: 760px) {
+    .stats { grid-template-columns: 1fr; }
+    .stat + .stat { border-left: 0; border-top: 1px solid var(--line); }
+    .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+    .usage-grid { grid-template-columns: 1fr; }
+    .topbar nav a { display: none; }
+    .topbar nav .btn { display: inline-block; }
+    .hero { padding: 64px 0 48px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="/" aria-label="UPXUU 图床镜像">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="brand-name">UPXUU 图床镜像</span>
+    </a>
+    <nav>
+      <a href="#stats">数据</a>
+      <a href="#gallery">近期</a>
+      <a href="#usage">接入</a>
+      <a class="btn" href="https://github.com/ImUpXuu/photo" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- Hero -->
+  <section class="hero">
+    <p class="eyebrow"><span class="mark" aria-hidden="true"></span>IMAGE HOSTING MIRROR</p>
+    <h1>UPXUU 图床<span class="hl">镜像</span></h1>
+    <p class="lead">
+      UPXUU 个人图床的公开镜像。图片使用永久链接分发，资源一年强缓存，
+      并提供可编程的 JSON 索引，方便站点与脚本直接接入。
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#gallery">浏览近期图片</a>
+      <a class="btn" href="#usage">查看接入方式</a>
+    </div>
+  </section>
+
+  <!-- 数据概览（数值由索引实时拉取） -->
+  <section id="stats" class="block">
+    <div class="section-head">
+      <span class="mark" aria-hidden="true"></span>
+      <h2>数据概览</h2>
+      <span class="sub">由根索引实时统计</span>
+    </div>
+    <div id="dynamic">
+      <div class="stats">
+        <div class="stat">
+          <div class="num" id="stat-total">—</div>
+          <div class="label">图片总数</div>
+        </div>
+        <div class="stat">
+          <div class="num" id="stat-months">—</div>
+          <div class="label">覆盖月份</div>
+        </div>
+        <div class="stat">
+          <div class="num" id="stat-latest">—</div>
+          <div class="label">最新月份</div>
+        </div>
+      </div>
+      <p class="fail-msg">索引暂不可用，请稍后刷新页面重试。</p>
+    </div>
+  </section>
+
+  <!-- 近期图片 -->
+  <section id="gallery" class="block">
+    <div class="section-head">
+      <span class="mark" aria-hidden="true"></span>
+      <h2>近期图片</h2>
+      <span class="sub" id="gallery-cap">取最新月份索引</span>
+    </div>
+    <div id="dynamic2">
+      <div class="gallery-grid" id="gallery-grid"><!-- 由脚本填充 --></div>
+      <div class="gallery-foot">
+        <a href="https://img.upxuu.lcrworld.xyz/images/index.json" target="_blank" rel="noopener">查看完整索引 →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 接入方式 -->
+  <section id="usage" class="block">
+    <div class="section-head">
+      <span class="mark" aria-hidden="true"></span>
+      <h2>接入方式</h2>
+      <span class="sub">永久链接 · 可编程索引</span>
+    </div>
+
+    <div class="usage-grid">
+      <div class="usage-card">
+        <div class="head"><span class="tag">LINK</span>图片永久链接</div>
+        <pre><span class="dim">https://img.upxuu.lcrworld.xyz/images/</span><span class="hl">{年}/{月}/{日}/{文件名}</span>
+
+<span class="dim">示例</span>
+https://img.upxuu.lcrworld.xyz/images/2026/8/6/1786010850663_650.png</pre>
+      </div>
+
+      <div class="usage-card">
+        <div class="head"><span class="tag">API</span>JSON 索引</div>
+        <pre><span class="hl">GET /images/index.json</span>
+
+<span class="dim">根索引列出各月份，月索引（/images/{年}/{月}/index.json）
+含完整 images 数组，可直接编程接入。</span></pre>
+      </div>
+    </div>
+
+    <p class="usage-note">
+      图片资源响应 <code>Cache-Control: public, max-age=31536000, immutable</code>，
+      一年强缓存，链接长期有效，适合外链与静态站点引用。
+    </p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap footer-inner">
+    <span>© 2026 UPXUU · 图床镜像</span>
+    <span>
+      <a href="https://img.upxuu.lcrworld.xyz/images/index.json" target="_blank" rel="noopener">index.json</a>
+      <span aria-hidden="true"> · </span>
+      <a href="https://github.com/ImUpXuu/photo" target="_blank" rel="noopener">GitHub</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+  /* 数据全部来自真实索引，失败时降级为静态介绍，不编造数字 */
+  const CDN = 'https://img.upxuu.lcrworld.xyz/images';
+  const OLD = 'https://edit.upxuu.com/img';
+
+  async function load() {
+    const box = document.getElementById('dynamic');
+    const grid = document.getElementById('gallery-grid');
+    const cap = document.getElementById('gallery-cap');
+    try {
+      const root = await (await fetch(CDN + '/index.json')).json();
+      const months = (root.months || []).slice().sort((a, b) => (a.ym < b.ym ? 1 : -1));
+      const total = months.reduce((n, m) => n + (m.count || 0), 0);
+
+      document.getElementById('stat-total').textContent = total;
+      document.getElementById('stat-months').textContent = months.length;
+
+      const latest = months[0];
+      if (latest) {
+        const [y, m] = latest.ym.split('-');
+        document.getElementById('stat-latest').textContent = y + ' 年 ' + Number(m) + ' 月';
+
+        const month = await (await fetch(latest.index.replace(OLD, CDN))).json();
+        const imgs = (month.images || []).slice(0, 8);
+        grid.innerHTML = imgs.map(img => {
+          const url = img.url.replace(OLD, CDN);
+          return '<a class="thumb" href="' + url + '" target="_blank" rel="noopener" title="' + img.name + '">' +
+                   '<img src="' + url + '" alt="' + img.name + '" loading="lazy" decoding="async">' +
+                 '</a>';
+        }).join('');
+        cap.textContent = latest.ym + ' 月度索引 · 共 ' + month.count + ' 张';
+      }
+      box.classList.add('ok');
+    } catch (e) {
+      box.classList.add('fail');
+    }
+  }
+  load();
+</script>
+
+</body>
+</html>
