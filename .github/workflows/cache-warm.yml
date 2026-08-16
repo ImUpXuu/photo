@@ -1,0 +1,133 @@
+name: EdgeOne 图片缓存预热
+
+on:
+  push:
+    branches: [ main ]
+    # 图片或索引变动时触发预热（generate-index 的自动提交也会命中，预热幂等无需排除）
+    paths:
+      - 'images/**'
+  workflow_dispatch:
+
+concurrency:
+  group: image-cache-warm
+  cancel-in-progress: true
+
+jobs:
+  cache-warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # EdgeOne Pages 收到 push 后构建 + 部署需要几分钟，等待 10 分钟确保新图已上线再预热
+      - name: 等待 EdgeOne 构建部署完成
+        run: sleep 600
+
+      # 索引本身也部署在 CDN 上；索引内 URL 基址是 edit.upxuu.com/img，
+      # 拉取后统一改写为 CDN 基址 img.upxuu.lcrworld.xyz/images
+      - name: 从索引提取全部图片 URL
+        run: |
+          python3 << 'PY'
+          import json
+          import sys
+          import urllib.request
+
+          ROOT_INDEX = "https://img.upxuu.lcrworld.xyz/images/index.json"
+          OLD_BASE = "https://edit.upxuu.com/img"
+          NEW_BASE = "https://img.upxuu.lcrworld.xyz/images"
+
+          def get_json(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "github-actions-cache-warm"})
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
+
+          root = get_json(ROOT_INDEX)
+          urls = set()
+          for m in root.get("months", []):
+              month_url = m.get("index", "").replace(OLD_BASE, NEW_BASE)
+              if not month_url:
+                  continue
+              try:
+                  month = get_json(month_url)
+              except Exception as e:
+                  print(f"WARN: 拉取月索引失败 {month_url}: {e}", file=sys.stderr)
+                  continue
+              for img in month.get("images", []):
+                  u = img.get("url", "").replace(OLD_BASE, NEW_BASE)
+                  if u:
+                      urls.add(u)
+              print(f"{month.get('ym')}: {len(month.get('images', []))} 张", file=sys.stderr)
+
+          with open("urls.txt", "w", encoding="utf-8") as f:
+              f.write("\n".join(sorted(urls)) + "\n")
+          print(f"共提取 {len(urls)} 个图片 URL")
+          PY
+
+      # 第一遍：预热边缘缓存（curl 无客户端缓存，天然忽略客户端缓存）
+      - name: 第一遍 curl（预热边缘缓存）
+        run: |
+          cat urls.txt | xargs -P 8 -I {} curl -s -o /dev/null -m 20 "{}" || true
+          echo "预热完成"
+
+      # 第二遍：检查 EO-Cache-Status 是否 Cache Hit
+      - name: 第二遍 curl（检查命中）
+        run: |
+          total=0; hit=0; miss=0; err=0
+          : > detail.txt
+          while IFS= read -r url; do
+            [ -z "$url" ] && continue
+            total=$((total+1))
+            tmp=$(mktemp)
+            curl -s -o /dev/null -m 20 -D "$tmp" "$url" || true
+            code=$(awk 'NR==1{print $2}' "$tmp" | tr -d '\r')
+            cache=$(grep -i '^eo-cache-status:' "$tmp" | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r')
+            rm -f "$tmp"
+            if [ "$code" != "200" ]; then
+              status="ERR"; err=$((err+1))
+            elif [ "$cache" = "Cache Hit" ]; then
+              status="HIT"; hit=$((hit+1))
+            else
+              status="MISS"; miss=$((miss+1))
+            fi
+            echo "$status|$code|$cache|$url" >> detail.txt
+          done < urls.txt
+
+          if [ "$total" -gt 0 ]; then
+            rate=$(awk "BEGIN{printf \"%.1f\", $hit*100.0/$total}")
+          else
+            rate="0.0"
+          fi
+
+          {
+            echo "# EdgeOne 图片缓存预热报告"
+            echo ""
+            echo "> 生成时间：$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo ""
+            echo "| 指标 | 数值 |"
+            echo "|------|------|"
+            echo "| 图片总数 | $total |"
+            echo "| 命中 Cache Hit | $hit |"
+            echo "| 未命中 Cache Miss | $miss |"
+            echo "| 失败 ERR | $err |"
+            echo "| 命中率 | $rate% |"
+            echo ""
+            echo "## 详细状态"
+            echo ""
+            echo "| 状态 | HTTP | 缓存 | URL |"
+            echo "|------|------|------|-----|"
+            while IFS='|' read -r status code cache url; do
+              echo "| $status | $code | $cache | $url |"
+            done < detail.txt
+          } > warm-report.md
+
+          cat warm-report.md
+
+      # 报告作为 artifact 上传，不提交到仓库，避免再次触发构建
+      - name: 上传预热报告为 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-warm-report
+          path: warm-report.md
+          retention-days: 14
