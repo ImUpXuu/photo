@@ -1,19 +1,14 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
   "headers": [
     {
-      // 匹配所有路径
       "source": "/**",
       "headers": [
         {
           "key": "Cache-Control",
-          // 浏览器禁止缓存，CDN 缓存一年
           "value": "no-store, s-maxage=31536000"
         },
         {
           "key": "Access-Control-Allow-Origin",
-          // 允许任意站点（含 upxuu.com 及其子域）跨域读取图片
           "value": "*"
         }
       ]
