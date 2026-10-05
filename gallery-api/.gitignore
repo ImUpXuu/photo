@@ -1,0 +1,5 @@
+# 服务器本地生成/敏感内容，绝不入库（photo 仓库是公开的）
+.env
+media/
+data/
+node_modules/
